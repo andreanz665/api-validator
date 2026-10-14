@@ -13,7 +13,40 @@ const PROVINSI = {
   93: "Papua Selatan", 94: "Papua", 95: "Papua Tengah", 96: "Papua Pegunungan",
 };
 
-module.exports = (req, res) => {
+// Nama wilayah diambil otomatis dari API publik (emsifa/api-wilayah-indonesia).
+const BASE = "https://emsifa.github.io/api-wilayah-indonesia/api";
+const cache = {};
+
+async function ambilDaftar(path) {
+  if (cache[path]) return cache[path];
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const r = await fetch(`${BASE}/${path}.json`, { signal: ctrl.signal });
+    if (!r.ok) return [];
+    const data = await r.json();
+    cache[path] = data;
+    return data;
+  } catch (e) {
+    return [];
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function cariWilayah(q) {
+  const prov = q.slice(0, 2);
+  const kab = q.slice(0, 4);
+  const kec = q.slice(0, 6);
+  const [listKab, listKec] = await Promise.all([
+    ambilDaftar(`regencies/${prov}`),
+    ambilDaftar(`districts/${kab}`),
+  ]);
+  const nama = (list, id) => (list.find((x) => x.id === id) || {}).name || null;
+  return { kabupaten_kota: nama(listKab, kab), kecamatan: nama(listKec, kec) };
+}
+
+module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   const q = String(req.query.q || "").trim();
   if (!/^\d{16}$/.test(q)) {
@@ -35,6 +68,8 @@ module.exports = (req, res) => {
   const tglValid =
     tgl.getUTCFullYear() === tahun && tgl.getUTCMonth() === bulan - 1 && tgl.getUTCDate() === hari;
 
+  const w = await cariWilayah(q);
+
   res.status(200).json({
     status: true,
     valid_struktur: Boolean(PROVINSI[kodeProv]) && tglValid,
@@ -45,6 +80,11 @@ module.exports = (req, res) => {
       urutan: q.slice(12, 16),
     },
     provinsi: PROVINSI[kodeProv] || null,
+    wilayah: {
+      provinsi: PROVINSI[kodeProv] || null,
+      kabupaten_kota: w.kabupaten_kota,
+      kecamatan: w.kecamatan,
+    },
     jenis_kelamin: perempuan ? "Perempuan" : "Laki-laki",
     tanggal_lahir: tglValid
       ? `${String(hari).padStart(2, "0")}-${String(bulan).padStart(2, "0")}-${tahun}`
